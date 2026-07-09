@@ -11,7 +11,6 @@ dist/
 build/
 
 # Excluded from the published repo (kept locally)
-migrations/
 scripts/
 SPEC.md
 CLAUDE.md
