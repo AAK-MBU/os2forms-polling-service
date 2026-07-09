@@ -1,0 +1,17 @@
+# Runs ONLY the polling service, reading ALL config (incl. DATABASE_URL) from .env.
+# Use this to point at your existing SQL Server / RPA database.
+#
+#   cp .env.example .env         # set DATABASE_URL (your RPA server), JWT_SECRET, BOOTSTRAP_ADMIN_KEY, ...
+#   docker compose up --build
+#
+# There is NO bundled database here — it connects to whatever DATABASE_URL points at.
+# For a self-contained local sandbox WITH its own throwaway SQL Server, use instead:
+#   docker compose -f docker-compose.sandbox.yml up --build
+
+services:
+  poller:
+    build: .
+    env_file: .env
+    ports:
+      - "8080:8080"
+    restart: unless-stopped

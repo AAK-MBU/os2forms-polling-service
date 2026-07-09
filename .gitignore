@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+dist/
+build/
+
+# Excluded from the published repo (kept locally)
+migrations/
+scripts/
+SPEC.md
+CLAUDE.md

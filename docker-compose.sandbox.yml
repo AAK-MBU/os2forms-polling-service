@@ -1,0 +1,38 @@
+# Self-contained local sandbox: a THROWAWAY SQL Server + the polling service, together.
+# Use ONLY when you do NOT have a SQL Server to point at.
+#   docker compose -f docker-compose.sandbox.yml up --build
+# Then open http://localhost:8080/docs
+#
+# Data lands in this bundled server's `master` database, [polling] schema. It is wiped by:
+#   docker compose -f docker-compose.sandbox.yml down -v
+# To use your REAL database instead, use the default docker-compose.yml with a .env.
+
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Str0ng-Local-Passw0rd"
+    ports:
+      - "1433:1433"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$${MSSQL_SA_PASSWORD}\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  poller:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "mssql+pyodbc://sa:Str0ng-Local-Passw0rd@db:1433/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+      JWT_SECRET: "local-dev-secret-change-me-at-least-32-bytes-long"
+      BOOTSTRAP_ADMIN_KEY: "local-admin-key-123"
+      POLL_INTERVAL_SECONDS: "15"
+      OS2FORMS_API_KEY: "dummy"
+      AUTOMATION_SERVER_URL: "http://localhost:9"
+      AUTOMATION_SERVER_API_KEY: "dummy"
+    ports:
+      - "8080:8080"
