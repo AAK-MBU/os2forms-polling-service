@@ -8,8 +8,6 @@ system** — Automation Server first, others via pluggable adapters.
 It owns its own database and config (`[polling].[PollJob]`) and never reads a consumer's
 schema. The same form can feed **multiple** destinations (one job each).
 
-See **[SPEC.md](SPEC.md)** for the full design.
-
 ## How it works
 
 ```
@@ -96,38 +94,18 @@ uv run python -m app.main
 
 ## Testing
 
-There are three levels: an **offline logic check** (no DB, no network — run this first and
-on every change), **lint**, and a **live end-to-end run** against the real systems.
+There are two levels: **lint**, and a **live end-to-end run** against the real systems.
 
-### 1. Offline logic check (no DB, no network)
-
-`scripts/smoke_test.py` imports the whole app and exercises the pure logic: adapter
-registries, `destination_system` parsing, payload build from `destination_config`, the
-verified OS2forms list + single-submission parsing (uuid-from-URL, `data.attachments`,
-`entity` metadata), retention math, JWT mint/verify + scope/ownership, and the FastAPI wiring
-(`/health` open, endpoints require auth/scope) via `TestClient`. It never opens a database
-connection.
-
-Sync the environment and run it (no ODBC system libraries required — `pyodbc` installs as a
-prebuilt wheel and is only imported at DB-connect time, which the smoke test never does):
+### 1. Lint
 
 ```bash
 uv sync --extra dev       # create .venv and install deps (incl. ruff) from the lockfile
-uv run python scripts/smoke_test.py
-```
-
-Expected: a list of `PASS …` lines ending in `ALL SMOKE CHECKS PASSED` (non-zero exit on any
-failure). Add a new `check("…", <condition>)` line to the script when you add behaviour.
-
-### 2. Lint
-
-```bash
 uv run ruff check app
 ```
 
 Expected: `All checks passed!`.
 
-### 3. Live end-to-end run
+### 2. Live end-to-end run
 
 Requires real credentials and the SQL Server ODBC driver (bundled in the Docker image; see
 `Dockerfile`). Point at a **non-production queue** first.
