@@ -134,6 +134,7 @@ class JobStatus(BaseModel):
 
 class SubmissionStateItem(BaseModel):
     submission_uuid: str
+    submission_serial: int | None = None
     status: str
     attempts: int
     last_error: str | None = None
@@ -148,3 +149,24 @@ class PaginatedSubmissions(BaseModel):
     limit: int
     offset: int
     items: list[SubmissionStateItem]
+
+
+class SerialGaps(BaseModel):
+    """Holes in a job's serial sequence — submissions the source never listed to us."""
+
+    job_id: int
+    webformId: str
+    first_serial: int | None = Field(
+        default=None, description="Lowest serial this job has on record"
+    )
+    last_serial: int | None = Field(
+        default=None, description="Highest serial this job has on record"
+    )
+    seen: int = Field(description="Distinct serials on record between first and last")
+    unknown_serial: int = Field(
+        description="Rows with no serial (predating the column, or non-numeric at the source). "
+        "A blind spot: these are not counted as present or missing."
+    )
+    missing_count: int = Field(description="Total holes between first_serial and last_serial")
+    missing: list[int] = Field(description="The missing serials, ascending, up to `limit`")
+    truncated: bool = Field(description="True when missing_count exceeds the returned list")

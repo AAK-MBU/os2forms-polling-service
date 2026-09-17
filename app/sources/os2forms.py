@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from app.config import Settings, get_settings
 from app.exceptions import (
@@ -25,6 +25,8 @@ from app.exceptions import (
     SourceNotFoundError,
     SourceResponseError,
     SourceServerError,
+    parse_retry_after,
+    retry_wait,
 )
 from app.logging import get_logger
 from app.sources.base import Attachment, SourceAdapter, Submission, SubmissionRef
@@ -34,9 +36,12 @@ log = get_logger(__name__)
 _RETRY = retry(
     retry=retry_if_exception_type(SourceServerError),
     stop=stop_after_attempt(4),
-    wait=wait_exponential(multiplier=0.5, max=8),
+    wait=retry_wait,
     reraise=True,
 )
+
+# Statuses that mean "come back later", not "this request is wrong".
+_THROTTLE_STATUSES = (408, 429, 503)
 
 
 class OS2formsSource(SourceAdapter):
@@ -69,6 +74,14 @@ class OS2formsSource(SourceAdapter):
             raise SourceAuthError(f"auth failed for {path} ({status})")
         if status == 404:
             raise SourceNotFoundError(f"not found: {path}")
+        # Throttling/timeout before the generic 4xx branch: 429 is retryable, and the poller
+        # now treats SourceResponseError as terminal, so misfiling it would dead-letter on
+        # rate limiting.
+        if status in _THROTTLE_STATUSES:
+            raise SourceServerError(
+                f"throttled {status} for {path}",
+                retry_after=parse_retry_after(response.headers.get("Retry-After")),
+            )
         if 400 <= status < 500:
             raise SourceResponseError(f"client error {status} for {path}")
         if status >= 500:
@@ -86,7 +99,8 @@ class OS2formsSource(SourceAdapter):
         Verified response shape:
             {"webform_id": "...",
              "submissions": {"<serial>": "<abs url .../submission/{uuid}>", ...}}
-        The uuid is the last path segment of each URL (it is not a field).
+        The uuid is the last path segment of each URL (it is not a field); the key is the
+        per-webform serial, which the poller stores so missing submissions can be spotted.
         """
         refs: list[SubmissionRef] = []
         seen: set[str] = set()
@@ -138,9 +152,12 @@ class OS2formsSource(SourceAdapter):
         if not subs:
             return []
         if isinstance(subs, dict):
-            entries: list[tuple[str, Any]] = [(str(k), v) for k, v in subs.items()]
+            # The verified shape: the key IS the serial.
+            entries: list[tuple[str | None, Any]] = [(str(k), v) for k, v in subs.items()]
         elif isinstance(subs, list):
-            entries = [(str(i), v) for i, v in enumerate(subs)]
+            # Defensive fallback for an unverified shape. The list position is NOT a serial —
+            # persisting it would fabricate a dense sequence and make gap detection lie.
+            entries = [(None, v) for v in subs]
         else:
             raise SourceResponseError("unexpected 'submissions' shape")
 

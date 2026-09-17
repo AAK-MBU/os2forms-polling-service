@@ -15,6 +15,7 @@ from app.api.schemas import (
     PollJobCreate,
     PollJobItem,
     PollJobUpdate,
+    SerialGaps,
     SubmissionStateItem,
 )
 from app.auth import Principal
@@ -274,6 +275,7 @@ async def job_submissions(
         items=[
             SubmissionStateItem(
                 submission_uuid=r.submission_uuid,
+                submission_serial=r.submission_serial,
                 status=r.status,
                 attempts=r.attempts,
                 last_error=r.last_error,
@@ -284,6 +286,49 @@ async def job_submissions(
             )
             for r in rows
         ],
+    )
+
+
+@router.get(
+    "/{job_id}/gaps",
+    response_model=SerialGaps,
+    summary="Missing serials for a job (backward reconciliation)",
+)
+async def job_serial_gaps(
+    job_id: int,
+    principal: Principal = Depends(require_read),
+    session: Session = Depends(get_session),
+    limit: int = Query(1000, ge=1, le=10000, description="Max missing serials to enumerate"),
+) -> SerialGaps:
+    """Report holes in this job's sequence of OS2forms serials.
+
+    Serials are consecutive per webform, so a hole means the source **never listed that
+    submission to us** — the only loss that leaves no state row behind to notice. A submission
+    that was listed but failed to deliver has a row and a serial, so it is not a hole; look at
+    `/status` for those.
+
+    Three things make a hole legitimate rather than alarming, so treat the result as a prompt
+    to check, not as proof of loss:
+
+    - the sequence is anchored at this job's own lowest serial, but submissions that arrived
+      before the job was registered are simply not this job's to have;
+    - a submission deleted in OS2forms leaves a permanent, legitimate hole;
+    - a job currently aborting (see the `job.fatal` log event) records nothing, so its
+      un-processed submissions read as holes until it recovers — transient, and self-healing;
+    - `unknown_serial` counts rows the analysis cannot place at all.
+    """
+    job = _owned_job(session, job_id, principal)
+    result = StateRepository(session).serial_reconciliation(job.id, limit=limit)
+    return SerialGaps(
+        job_id=job.id,
+        webformId=job.webformId,
+        first_serial=result.first_serial,
+        last_serial=result.last_serial,
+        seen=result.seen,
+        unknown_serial=result.unknown_serial,
+        missing_count=result.missing_count,
+        missing=result.missing,
+        truncated=result.truncated,
     )
 
 
