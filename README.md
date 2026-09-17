@@ -39,7 +39,7 @@ app/
   models.py            # PollJob (config) + ApiKey + SubmissionPollStatus
   jobs.py              # PollJob repository (CRUD + active-job loading)
   state.py             # SubmissionPollStatus repository (dedup/retry/retention/gaps)
-  payload.py           # build a work-item payload from a submission + destination_config
+  payload.py           # shape a submission per the job's payload_mapping (raw/parsed/map)
   auth.py              # JWT mint/verify, API-key exchange, scopes/ownership
   poller.py            # the poll loop (group by source+form, fan out to jobs)
   main.py              # FastAPI app + background poll thread (entrypoint)
@@ -82,6 +82,58 @@ Holes are a prompt to check, not proof: a job registered after the form went liv
 mid-sequence, and submissions deleted in OS2forms leave permanent, legitimate holes.
 
 Interactive docs at `http://localhost:8080/docs`.
+
+## Payload shaping
+
+`payload_mapping` on a job decides how a submission is shaped before it is handed to the
+destination adapter. It is optional: a job without one (`NULL`) delivers the source response
+verbatim, which is the back-compatible default.
+
+| `mode` | Payload |
+|---|---|
+| `raw` (default) | `submission.raw` — the source's response for the submission, unchanged |
+| `parsed` | the adapter's structured view: `{"data": …, "attachments": [...], "metadata": …}` |
+| `map` | an object you define, built from dotted paths into `submission.raw` |
+
+For OS2forms, `parsed` means `data` = the form fields (minus the attachments sub-node),
+`attachments` = `[{name, url, mime, size}]`, and `metadata` = `{serial, created, completed,
+currentPage}` pulled from the Drupal `entity` field-arrays.
+
+### `map` mode
+
+`fields` maps an output key to a path into the raw submission. Numeric segments index into
+lists, so the Drupal field-array shape `{"entity": {"serial": [{"value": 42}]}}` is reachable
+as `entity.serial.0.value`. A field is either a path string or `{"path": …, "default": …}`.
+
+```bash
+curl localhost:8080/polling/jobs -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{
+    "name": "My webform",
+    "source": "os2forms",
+    "webformId": "_my_webform",
+    "destination_system": "automation_server:IntakeQueue",
+    "payload_mapping": {
+      "mode": "map",
+      "fields": {
+        "serial":   "entity.serial.0.value",
+        "cpr":      "data.cpr_nummer",
+        "caseType": {"path": "data.sagstype", "default": "Standard"}
+      },
+      "includeAttachments": true
+    }
+  }'
+```
+
+- A path that resolves to nothing **omits** its key, unless the field declares a `default`.
+  Paths are checked at delivery, not at registration — a typo yields a missing key, not an error.
+- `includeAttachments: true` appends the same normalized `attachments` list `parsed` produces.
+- Paths resolve against the raw submission, so a mapping is source-agnostic: it describes the
+  source's response shape, not anything OS2forms-specific in the service.
+
+Mappings are validated twice on purpose — `POST`/`PATCH /polling/jobs` rejects a bad one with
+**422** at registration, and `app/payload.py` re-checks at delivery time for rows written
+outside the API. A mapping that is still invalid at delivery raises a destination-config error,
+which aborts that job for the cycle without burning an attempt on any submission.
 
 ## Run
 
