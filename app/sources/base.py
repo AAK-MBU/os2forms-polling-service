@@ -18,11 +18,27 @@ class SubmissionRef:
 
     ``uuid`` is parsed from the submission URL; ``serial`` is the OS2forms sid/serial the
     list keys on; ``url`` is the absolute link to fetch the full submission.
+
+    ``serial`` must be the source's own identifier or ``None`` — never a positional index,
+    which would look like a serial and silently corrupt gap detection.
     """
 
     uuid: str
     serial: str | None = None
     url: str | None = None
+
+    @property
+    def numeric_serial(self) -> int | None:
+        """The serial as an integer, or None when the source supplied nothing usable.
+
+        Serials are persisted as integers so gaps are arithmetic rather than string work.
+        """
+        if self.serial is None:
+            return None
+        try:
+            return int(self.serial)
+        except ValueError:
+            return None
 
 
 @dataclass

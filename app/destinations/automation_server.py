@@ -14,7 +14,7 @@ Setting reference = OS2forms submission uuid gives idempotency + end-to-end trac
 from __future__ import annotations
 
 import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from app.config import Settings, get_settings
 from app.destinations.base import DestinationAdapter
@@ -23,6 +23,8 @@ from app.exceptions import (
     DestinationConfigError,
     DestinationResponseError,
     DestinationServerError,
+    parse_retry_after,
+    retry_wait,
 )
 from app.logging import get_logger
 
@@ -31,9 +33,12 @@ log = get_logger(__name__)
 _RETRY = retry(
     retry=retry_if_exception_type(DestinationServerError),
     stop=stop_after_attempt(4),
-    wait=wait_exponential(multiplier=0.5, max=8),
+    wait=retry_wait,
     reraise=True,
 )
+
+# Statuses that mean "come back later", not "this request is wrong".
+_THROTTLE_STATUSES = (408, 429, 503)
 
 
 class AutomationServerDestination(DestinationAdapter):
@@ -79,6 +84,13 @@ class AutomationServerDestination(DestinationAdapter):
         status = response.status_code
         if status in (401, 403):
             raise DestinationAuthError(f"auth failed for {path} ({status})")
+        # Throttling/timeout is retryable; without this a 429 falls through to the callers,
+        # which raise the now-terminal DestinationResponseError and dead-letter on rate limiting.
+        if status in _THROTTLE_STATUSES:
+            raise DestinationServerError(
+                f"throttled {status} for {path}",
+                retry_after=parse_retry_after(response.headers.get("Retry-After")),
+            )
         if status >= 500:
             raise DestinationServerError(f"server error {status} for {path}")
         return response
