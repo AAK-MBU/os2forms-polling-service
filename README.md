@@ -122,7 +122,8 @@ Register a job (see **Using the API** above), then watch the structured JSON log
 - `migration.applied` / `state.bootstrapped` — the `[polling]` schema + tables were created.
 - `os2forms.listed count=N` — the webform_rest list call succeeded and found submissions.
 - `submission.delivered` — a submission was pushed to the destination work queue.
-- `poll.completed jobs=… delivered=… failed=… skipped=…` — end-of-cycle summary.
+- `poll.completed jobs=… delivered=… failed=… skipped=…` — end-of-cycle summary. It also
+  carries `dead_letter=`, `abort_job=` and `abort_group=` when those occur.
 
 Then check the target queue for the new work items, `GET /polling/jobs/{id}/status`, and the
 state table:
@@ -137,8 +138,11 @@ not re-deliver them.
 
 **Tips for a safe first run:**
 
-- Set `MAX_ATTEMPTS` low and watch a deliberately-misconfigured job move `failed → dead_letter`
-  (retry it via `POST /polling/jobs/{id}/submissions/{uuid}/retry`).
+- Set `MAX_ATTEMPTS` low and watch a submission the destination keeps 5xx-ing move
+  `failed → dead_letter` (retry it via `POST /polling/jobs/{id}/submissions/{uuid}/retry`).
+- Point a job at a queue that does not exist and confirm the log shows `job.fatal` with
+  `scope=abort_job` and **no** growth in `attempts`: a broken job is not the submissions' fault,
+  so the poller abandons the job for that cycle instead of parking its whole backlog.
 - Set a job's `isActive` false (`PATCH /polling/jobs/{id}`) to confirm it is ignored.
 - To reduce blast radius, point `destination_system` at a throwaway queue
   (`automation_server:TestQueue`).

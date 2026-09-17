@@ -7,6 +7,8 @@ whether to bump attempts toward the dead-letter threshold.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from tenacity import RetryCallState, wait_exponential
 
 # Upper bound on an honoured Retry-After, so a large (or hostile) hint cannot stall the poll
@@ -72,9 +74,53 @@ class DestinationResponseError(DestinationError):
     """Destination returned an unexpected response. Terminal."""
 
 
+# --- Classification: what the poller should do with a failure -------------------
+
+
+class Outcome(StrEnum):
+    """What a failure means for the poll loop. Values double as ``poll.completed`` counters."""
+
+    # Transient: bump attempts and try again on a later cycle.
+    retry = "failed"
+    # This submission will never succeed: park it now instead of burning MAX_ATTEMPTS cycles.
+    dead_letter = "dead_letter"
+    # The job is misconfigured or its destination rejects us — nothing to do with this
+    # submission. Abandon the job for this cycle without touching any attempt counter.
+    abort_job = "abort_job"
+    # The source itself rejects us, which breaks every job on this webform.
+    abort_group = "abort_group"
+
+
 # Exceptions worth retrying on a later poll cycle (do NOT count hard against attempts
 # in a way that dead-letters a merely-flaky dependency too fast — but we still bump).
 RETRYABLE = (SourceServerError, DestinationServerError)
+
+# Terminal for one submission: this submission is gone or unparseable, but the job is fine.
+TERMINAL_FOR_SUBMISSION = (SourceNotFoundError, SourceResponseError, DestinationResponseError)
+
+# Fatal for the whole job: a bad destination credential, an unknown queue, or an invalid
+# payload_mapping fails identically for every submission. Dead-lettering each one would park
+# the entire backlog on a single misconfiguration and force a manual retry per submission.
+FATAL_FOR_JOB = (DestinationAuthError, DestinationConfigError)
+
+# Fatal for every job on the webform: the source credential is bad or has been revoked.
+FATAL_FOR_GROUP = (SourceAuthError,)
+
+
+def classify(exc: BaseException) -> Outcome:
+    """Map a failure to the poller's reaction.
+
+    Anything unrecognized is treated as retryable on purpose: an unexpected exception is more
+    likely a transient bug or dependency hiccup than proof that a submission is undeliverable,
+    and retrying is the recoverable mistake of the two.
+    """
+    if isinstance(exc, FATAL_FOR_GROUP):
+        return Outcome.abort_group
+    if isinstance(exc, FATAL_FOR_JOB):
+        return Outcome.abort_job
+    if isinstance(exc, TERMINAL_FOR_SUBMISSION):
+        return Outcome.dead_letter
+    return Outcome.retry
 
 
 # --- Retry policy shared by the adapters ---------------------------------------

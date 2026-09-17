@@ -59,6 +59,7 @@ class StateRepository:
         self.session.add(state)
 
     def mark_failure(self, state: SubmissionPollStatus, error: str, max_attempts: int) -> None:
+        """Record a *retryable* failure; dead-letter once the attempt budget is spent."""
         state.attempts += 1
         state.last_error = error[:_MAX_ERROR_LEN]
         state.status = (
@@ -66,6 +67,18 @@ class StateRepository:
             if state.attempts >= max_attempts
             else SubmissionStatus.failed
         )
+        self.session.add(state)
+
+    def mark_dead_letter(self, state: SubmissionPollStatus, error: str) -> None:
+        """Park a submission immediately, bypassing the attempt budget.
+
+        For failures that cannot fix themselves (submission deleted at the source, response
+        that will not parse): spending MAX_ATTEMPTS poll cycles on them only delays the point
+        at which someone sees the problem.
+        """
+        state.attempts += 1
+        state.last_error = error[:_MAX_ERROR_LEN]
+        state.status = SubmissionStatus.dead_letter
         self.session.add(state)
 
     def sweep_expired(self, now: datetime | None = None) -> int:
