@@ -18,7 +18,7 @@ poll loop (every POLL_INTERVAL_SECONDS):          ▼  active jobs
     for each job in the group:
       for each submission NOT delivered for THIS job (dedup on job_id+uuid):
         fetch submission → build payload → destination adapter (e.g. workqueue add, ref=uuid)
-        → record in [polling].SubmissionPollStatus
+        → record in [polling].SubmissionPollStatus (uuid + serial, for gap detection)
 erase_after sweep → expire old state rows
 ```
 
@@ -38,7 +38,7 @@ app/
   db.py                # sync SQLAlchemy engine + migrations bootstrap
   models.py            # PollJob (config) + ApiKey + SubmissionPollStatus
   jobs.py              # PollJob repository (CRUD + active-job loading)
-  state.py             # SubmissionPollStatus repository (dedup/retry/retention)
+  state.py             # SubmissionPollStatus repository (dedup/retry/retention/gaps)
   payload.py           # build a work-item payload from a submission + destination_config
   auth.py              # JWT mint/verify, API-key exchange, scopes/ownership
   poller.py            # the poll loop (group by source+form, fan out to jobs)
@@ -48,6 +48,7 @@ app/
   destinations/        # destination adapters, keyed by destination_system prefix
 migrations/            # idempotent T-SQL, applied in order at startup
   001_create_poll_job.sql  002_create_api_key.sql  003_create_submission_poll_status.sql
+  004_add_payload_mapping.sql  005_add_submission_serial.sql
 ```
 
 ## Using the API
@@ -70,7 +71,15 @@ curl localhost:8080/polling/jobs -H "Authorization: Bearer $TOKEN" \
 
 # 3. Watch a job's poll health
 curl localhost:8080/polling/jobs/1/status -H "Authorization: Bearer $TOKEN"
+
+# 4. Reconcile backwards: which submissions were never listed to us at all?
+curl localhost:8080/polling/jobs/1/gaps -H "Authorization: Bearer $TOKEN"
 ```
+
+OS2forms serials are consecutive per webform, so a hole in the serials a job holds rows for
+means a submission never reached the poller — the one loss that leaves no state row behind.
+Holes are a prompt to check, not proof: a job registered after the form went live starts
+mid-sequence, and submissions deleted in OS2forms leave permanent, legitimate holes.
 
 Interactive docs at `http://localhost:8080/docs`.
 
@@ -124,6 +133,8 @@ Register a job (see **Using the API** above), then watch the structured JSON log
 - `submission.delivered` — a submission was pushed to the destination work queue.
 - `poll.completed jobs=… delivered=… failed=… skipped=…` — end-of-cycle summary. It also
   carries `dead_letter=`, `abort_job=` and `abort_group=` when those occur.
+- `job.serial_gap count=N` — the job's serial sequence has holes; enumerate them with
+  `GET /polling/jobs/{id}/gaps`.
 
 Then check the target queue for the new work items, `GET /polling/jobs/{id}/status`, and the
 state table:

@@ -132,23 +132,44 @@ class PollingService:
             for ref in refs:
                 if self._stop.is_set():
                     break
-                outcome = self._process_submission(job, source, destination, ref.uuid)
+                outcome = self._process_submission(job, source, destination, ref)
                 counts[outcome] = counts.get(outcome, 0) + 1
                 if outcome in (Outcome.abort_job, Outcome.abort_group):
                     return Outcome(outcome)
         finally:
             destination.close()
+        self._check_serial_gaps(job)
         return None
 
-    def _process_submission(self, job, source, destination, uuid: str) -> str:
+    def _check_serial_gaps(self, job: PollJob) -> None:
+        """Surface holes in the job's serial sequence without waiting for anyone to ask.
+
+        A hole means the source never listed a submission to us — the one loss that leaves no
+        state row behind to notice. Enumerate them via GET /polling/jobs/{id}/gaps.
+        """
+        try:
+            with session_scope() as session:
+                gaps = StateRepository(session).serial_gap_count(job.id)
+        except Exception as exc:  # noqa: BLE001 - reconciliation must never break a cycle
+            log.warning("job.serial_gap_check_failed", job_id=job.id, detail=str(exc))
+            return
+        if gaps > 0:
+            log.warning("job.serial_gap", job_id=job.id, webform_id=job.webformId, count=gaps)
+
+    def _process_submission(self, job, source, destination, ref) -> str:
         """Process one submission for one job in its own transaction. Returns an outcome key."""
+        uuid = ref.uuid
+        serial = ref.numeric_serial
         with session_scope() as session:
             repo = StateRepository(session)
             state = repo.get(job.id, uuid)
             if state is not None and state.status in _TERMINAL_STATES:
+                # One write per historical row, once: rows that predate the serial column
+                # would otherwise stay invisible to reconciliation forever.
+                repo.backfill_serial(state, serial)
                 return "skipped"
 
-            state = repo.get_or_create(job.id, job.webformId, uuid)
+            state = repo.get_or_create(job.id, job.webformId, uuid, serial)
             is_new = state.status == SubmissionStatus.new and state.attempts == 0
 
             try:

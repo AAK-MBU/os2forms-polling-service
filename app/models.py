@@ -86,6 +86,7 @@ class SubmissionPollStatus(SQLModel, table=True):
 
     The unique (job_id, submission_uuid) constraint is the dedup key — the same submission
     delivered to two destinations (two jobs) yields two independently-tracked rows.
+    ``submission_serial`` is not part of any key; it exists purely so gaps can be spotted.
     """
 
     __tablename__ = "SubmissionPollStatus"
@@ -108,6 +109,12 @@ class SubmissionPollStatus(SQLModel, table=True):
     # Denormalized for reporting/queries (the job's webformId at delivery time).
     os2formWebformId: str = Field(sa_column=sa.Column(sa.String(255), nullable=False))
     submission_uuid: str = Field(sa_column=sa.Column(sa.String(255), nullable=False))
+    # The source's per-webform consecutive serial, for backward reconciliation: a hole in the
+    # sequence means a submission was never listed to us. NULL for rows predating the column
+    # and for sources that supply no usable numeric serial.
+    submission_serial: int | None = Field(
+        default=None, sa_column=sa.Column(sa.BigInteger, nullable=True)
+    )
     status: str = Field(
         default=SubmissionStatus.new,
         sa_column=sa.Column(sa.String(20), nullable=False, index=True),

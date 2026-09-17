@@ -99,7 +99,8 @@ class OS2formsSource(SourceAdapter):
         Verified response shape:
             {"webform_id": "...",
              "submissions": {"<serial>": "<abs url .../submission/{uuid}>", ...}}
-        The uuid is the last path segment of each URL (it is not a field).
+        The uuid is the last path segment of each URL (it is not a field); the key is the
+        per-webform serial, which the poller stores so missing submissions can be spotted.
         """
         refs: list[SubmissionRef] = []
         seen: set[str] = set()
@@ -151,9 +152,12 @@ class OS2formsSource(SourceAdapter):
         if not subs:
             return []
         if isinstance(subs, dict):
-            entries: list[tuple[str, Any]] = [(str(k), v) for k, v in subs.items()]
+            # The verified shape: the key IS the serial.
+            entries: list[tuple[str | None, Any]] = [(str(k), v) for k, v in subs.items()]
         elif isinstance(subs, list):
-            entries = [(str(i), v) for i, v in enumerate(subs)]
+            # Defensive fallback for an unverified shape. The list position is NOT a serial —
+            # persisting it would fabricate a dense sequence and make gap detection lie.
+            entries = [(None, v) for v in subs]
         else:
             raise SourceResponseError("unexpected 'submissions' shape")
 
