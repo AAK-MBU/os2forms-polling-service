@@ -76,10 +76,13 @@ curl localhost:8080/polling/jobs/1/status -H "Authorization: Bearer $TOKEN"
 curl localhost:8080/polling/jobs/1/gaps -H "Authorization: Bearer $TOKEN"
 ```
 
-OS2forms serials are consecutive per webform, so a hole in the serials a job holds rows for
-means a submission never reached the poller — the one loss that leaves no state row behind.
-Holes are a prompt to check, not proof: a job registered after the form went live starts
-mid-sequence, and submissions deleted in OS2forms leave permanent, legitimate holes.
+`/status` (and every job in the list) carries `last_successful_poll_at`: when the job last
+completed a full pass over its form's listing. Every poll re-lists every submission, so a
+submission can only be missed if OS2forms purges it before the next full pass. Alert when this
+timestamp is older than the form's retention period (or a conservative stand-in for it).
+
+`/gaps` is **not reliable**: the list endpoint keys on the site-wide submission `sid`, not the
+per-webform serial, so the "holes" are mostly other forms' submissions. See `CLAUDE.md`.
 
 Interactive docs at `http://localhost:8080/docs`.
 
@@ -185,8 +188,8 @@ Register a job (see **Using the API** above), then watch the structured JSON log
 - `submission.delivered` — a submission was pushed to the destination work queue.
 - `poll.completed jobs=… delivered=… failed=… skipped=…` — end-of-cycle summary. It also
   carries `dead_letter=`, `abort_job=` and `abort_group=` when those occur.
-- `job.serial_gap count=N` — the job's serial sequence has holes; enumerate them with
-  `GET /polling/jobs/{id}/gaps`.
+- `job.serial_gap count=N` — holes in the stored sids. Expect it on any form sharing a site
+  with other forms; it is not a loss signal (see `/gaps` above).
 
 Then check the target queue for the new work items, `GET /polling/jobs/{id}/status`, and the
 state table:

@@ -55,6 +55,7 @@ def _to_item(job: PollJob) -> PollJobItem:
         erase_after=job.erase_after,
         created_at=job.created_at,
         updated_at=job.updated_at,
+        last_successful_poll_at=job.last_successful_poll_at,
     )
 
 
@@ -248,6 +249,7 @@ async def job_status(
         isActive=job.isActive,
         counts=repo.status_counts(job.id),
         last_delivered_at=repo.last_delivered_at(job.id),
+        last_successful_poll_at=job.last_successful_poll_at,
     )
 
 
