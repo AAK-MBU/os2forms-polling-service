@@ -110,6 +110,11 @@ class PollJobItem(BaseModel):
     erase_after: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    last_successful_poll_at: datetime | None = Field(
+        default=None,
+        description="When the poll loop last completed a full pass over this job's listing "
+        "(naive UTC). NULL until the first one.",
+    )
 
 
 class PaginatedPollJobs(BaseModel):
@@ -130,6 +135,7 @@ class JobStatus(BaseModel):
     isActive: bool
     counts: dict[str, int]
     last_delivered_at: datetime | None = None
+    last_successful_poll_at: datetime | None = None
 
 
 class SubmissionStateItem(BaseModel):

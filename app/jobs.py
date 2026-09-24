@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
@@ -97,6 +97,15 @@ class PollJobRepository:
             self.session.rollback()
             raise DuplicateJobError("update would collide with an existing job") from exc
         return job
+
+    def mark_polled(self, job_id: int) -> None:
+        """Stamp a completed full pass. A bare UPDATE: it must not bump ``updated_at``,
+        which records edits to the job's configuration, not poll activity."""
+        self.session.exec(
+            update(PollJob)
+            .where(PollJob.id == job_id)  # type: ignore[arg-type]
+            .values(last_successful_poll_at=utcnow())
+        )
 
     def delete(self, job: PollJob) -> None:
         self.session.delete(job)

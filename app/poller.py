@@ -131,15 +131,31 @@ class PollingService:
         try:
             for ref in refs:
                 if self._stop.is_set():
-                    break
+                    # Interrupted mid-pass: some listed submissions have no row yet, so this
+                    # must not count as a full pass.
+                    return None
                 outcome = self._process_submission(job, source, destination, ref)
                 counts[outcome] = counts.get(outcome, 0) + 1
                 if outcome in (Outcome.abort_job, Outcome.abort_group):
                     return Outcome(outcome)
         finally:
             destination.close()
+        self._mark_polled(job)
         self._check_serial_gaps(job)
         return None
+
+    def _mark_polled(self, job: PollJob) -> None:
+        """Record that every submission the source listed now has a row for this job.
+
+        Reached only after a full pass: the listing succeeded and no submission aborted the
+        job. A job that keeps aborting, or whose listing keeps failing, goes stale here even
+        though every counter stays at 0 — which is the point.
+        """
+        try:
+            with session_scope() as session:
+                PollJobRepository(session).mark_polled(job.id)
+        except Exception as exc:  # noqa: BLE001 - bookkeeping must never break a cycle
+            log.warning("job.mark_polled_failed", job_id=job.id, detail=str(exc))
 
     def _check_serial_gaps(self, job: PollJob) -> None:
         """Surface holes in the job's serial sequence without waiting for anyone to ask.

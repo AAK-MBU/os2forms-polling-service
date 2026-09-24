@@ -61,6 +61,12 @@ class PollJob(SQLModel, table=True):
     updated_at: datetime | None = Field(
         default=None, sa_column=sa.Column(sa.DateTime, nullable=True)
     )
+    # Written only by the poll loop, when the job completes a full pass over its form's
+    # listing (migration 006). Stale or NULL means submissions may be expiring in OS2forms
+    # before this job ever sees them. Not touched by the API, and does not bump updated_at.
+    last_successful_poll_at: datetime | None = Field(
+        default=None, sa_column=sa.Column(sa.DateTime, nullable=True)
+    )
 
 
 class ApiKey(SQLModel, table=True):
